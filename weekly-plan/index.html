@@ -643,6 +643,12 @@ function buildMainBody() {
   tbody.appendChild(memoTr);
 }
 
+const SUBJ_SHORT = { '外国語活動': '外国語活動', '外国語': '外国語' };
+function shortSubj(s) {
+  const map = { '外国語活動': '外国語' };
+  return map[s] || s;
+}
+
 function buildRightTable() {
   const grade = document.getElementById('grade').value;
   const kumi = document.getElementById('kumi').value;
@@ -652,7 +658,7 @@ function buildRightTable() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td style="font-size:9px;">${grade}${kumi}組</td>
-      <td style="text-align:left; font-size:10px;">${subj}</td>
+      <td style="text-align:left; font-size:9px; white-space:nowrap;">${shortSubj(subj)}</td>
       <td><span id="w_yotei_${subj}" style="display:block;text-align:center;font-size:10px;background:#f0f8ff;padding:1px;">0</span></td>
       <td><input type="text" id="w_jisseki_${subj}" value="0" style="width:28px;border:none;text-align:center;font-size:10px;background:transparent;outline:none;"></td>
       <td><input type="text" id="c_yotei_${subj}" value="0" style="width:28px;border:none;text-align:center;font-size:10px;background:transparent;outline:none;"></td>
