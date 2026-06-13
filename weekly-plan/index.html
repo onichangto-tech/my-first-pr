@@ -913,16 +913,28 @@ function loadCSV() {
 function showSaveModal() { document.getElementById('saveModal').classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
-function exportPDF() {
+async function exportPDF() {
   closeModal('saveModal');
   const el = document.getElementById('plan');
-  html2pdf().set({
+
+  // A4横 余白5mm → 有効領域 287mm × 200mm を px に変換
+  const pdfW = (297 - 10) / 25.4 * 96;
+  const pdfH = (210 - 10) / 25.4 * 96;
+  const scale = Math.min(pdfW / el.offsetWidth, pdfH / el.scrollHeight);
+
+  // 一時的にズームして1ページに収める
+  el.style.zoom = scale;
+  await new Promise(r => setTimeout(r, 150));
+
+  await html2pdf().set({
     margin: 5,
     filename: `週案_${document.getElementById('month').value}月.pdf`,
-    image: { type: 'jpeg', quality: 0.98 },
+    image: { type: 'jpeg', quality: 0.95 },
     html2canvas: { scale: 2 },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
   }).from(el).save();
+
+  el.style.zoom = '';
 }
 
 function exportWord() {
