@@ -936,21 +936,31 @@ async function exportPDF() {
   closeModal('saveModal');
   const el = document.getElementById('plan');
 
-  // html2canvasでレンダリング
-  const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false });
-  const imgData = canvas.toDataURL('image/jpeg', 0.95);
+  // A4横の有効領域 (mm → px at 96dpi)
+  const margin = 5;
+  const pageWmm = 297 - margin * 2; // 287mm
+  const pageHmm = 210 - margin * 2; // 200mm
+  const pageWpx = pageWmm / 25.4 * 96; // ~1084px
+  const pageHpx = pageHmm / 25.4 * 96; // ~756px
 
-  // jsPDFでA4横に収める
+  // 元の幅を保存して、高さに合わせた幅に一時変更 → 横いっぱいに使う
+  const origWidth = el.style.width;
+  const naturalH = el.scrollHeight;
+  const scaleByH = pageHpx / naturalH;
+  const targetW = Math.round(pageWpx / scaleByH);
+  el.style.width = targetW + 'px';
+  await new Promise(r => setTimeout(r, 100));
+
+  const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false });
+  el.style.width = origWidth;
+
+  const imgData = canvas.toDataURL('image/jpeg', 0.95);
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-  const margin = 5;
-  const pageW = pdf.internal.pageSize.getWidth() - margin * 2; // 287mm
-  const pageH = pdf.internal.pageSize.getHeight() - margin * 2; // 200mm
 
-  // 画像サイズをmm換算してA4に収まるようスケール
   const imgWmm = canvas.width / 2 / 96 * 25.4;
   const imgHmm = canvas.height / 2 / 96 * 25.4;
-  const ratio = Math.min(pageW / imgWmm, pageH / imgHmm);
+  const ratio = Math.min(pageWmm / imgWmm, pageHmm / imgHmm);
 
   pdf.addImage(imgData, 'JPEG', margin, margin, imgWmm * ratio, imgHmm * ratio);
   pdf.save(`週案_${document.getElementById('month').value}月.pdf`);
