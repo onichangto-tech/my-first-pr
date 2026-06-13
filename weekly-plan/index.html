@@ -63,6 +63,14 @@
     };
 
     // 年間計画も Firebase に保存・読み込み
+    // Firebase から週データを削除
+    window.firebaseDelete = async function(weekId) {
+      try {
+        const { deleteDoc } = await import("https://www.gstatic.com/firebasejs/11.9.0/firebase-firestore.js");
+        await deleteDoc(doc(db, 'teachers', teacherId, 'weeks', weekId));
+      } catch(e) { console.error('削除エラー:', e); }
+    };
+
     window.firebaseSavePlan = async function(plan) {
       try {
         await setDoc(doc(db, 'teachers', teacherId, 'settings', 'annualPlan'), { plan });
@@ -803,6 +811,7 @@ function newWeek() {
   buildMainBody();
   buildRightTable();
   buildHeaders();
+  clearAsaInputs();
   renderWeekList();
 }
 
@@ -815,6 +824,7 @@ function loadWeek(id) {
     buildMainBody();
     buildRightTable();
     buildHeaders();
+    clearAsaInputs();
     renderWeekList();
     return;
   }
@@ -871,6 +881,7 @@ function deleteWeek(id) {
   let weeks = getWeeks();
   weeks = weeks.filter(w => w.id !== id);
   saveWeeks(weeks);
+  if (window.firebaseDelete) window.firebaseDelete(id);
   if (currentWeekId === id) {
     currentWeekId = null;
     if (weeks.length) loadWeek(weeks[0].id);
@@ -878,6 +889,15 @@ function deleteWeek(id) {
   } else {
     renderWeekList();
   }
+}
+
+function clearAsaInputs() {
+  for (let d = 0; d < 6; d++) {
+    const el = document.getElementById(`asa_${d}`);
+    if (el) { el.value = ''; el.style.height = 'auto'; }
+  }
+  const wm = document.getElementById('weekmemo');
+  if (wm) wm.value = '';
 }
 
 // ---- 年間計画CSV読み込み ----
