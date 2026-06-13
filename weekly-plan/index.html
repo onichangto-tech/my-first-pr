@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>週案作成ツール</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js"></script>
   <!-- Firebase -->
   <script type="module">
@@ -937,24 +938,24 @@ async function exportPDF() {
   closeModal('saveModal');
   const el = document.getElementById('plan');
 
-  // A4横 余白5mm → 有効領域 287mm × 200mm を px に変換
-  const pdfW = (297 - 10) / 25.4 * 96;
-  const pdfH = (210 - 10) / 25.4 * 96;
-  const scale = Math.min(pdfW / el.offsetWidth, pdfH / el.scrollHeight);
+  // html2canvasでレンダリング
+  const canvas = await html2canvas(el, { scale: 2, useCORS: true, logging: false });
+  const imgData = canvas.toDataURL('image/jpeg', 0.95);
 
-  // 一時的にズームして1ページに収める
-  el.style.zoom = scale;
-  await new Promise(r => setTimeout(r, 150));
+  // jsPDFでA4横に収める
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const margin = 5;
+  const pageW = pdf.internal.pageSize.getWidth() - margin * 2; // 287mm
+  const pageH = pdf.internal.pageSize.getHeight() - margin * 2; // 200mm
 
-  await html2pdf().set({
-    margin: 5,
-    filename: `週案_${document.getElementById('month').value}月.pdf`,
-    image: { type: 'jpeg', quality: 0.95 },
-    html2canvas: { scale: 2 },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
-  }).from(el).save();
+  // 画像サイズをmm換算してA4に収まるようスケール
+  const imgWmm = canvas.width / 2 / 96 * 25.4;
+  const imgHmm = canvas.height / 2 / 96 * 25.4;
+  const ratio = Math.min(pageW / imgWmm, pageH / imgHmm);
 
-  el.style.zoom = '';
+  pdf.addImage(imgData, 'JPEG', margin, margin, imgWmm * ratio, imgHmm * ratio);
+  pdf.save(`週案_${document.getElementById('month').value}月.pdf`);
 }
 
 function exportWord() {
