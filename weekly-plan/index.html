@@ -4,9 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>週案作成ツール</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js"></script>
   <!-- Firebase -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-app.js";
@@ -347,8 +346,7 @@
     <h3>保存・出力形式を選択</h3>
     <p style="font-size:12px; color:#666;">週案データはブラウザに自動保存されています。<br>ファイルとして出力する形式を選んでください。</p>
     <div class="modal-btns">
-      <button class="modal-btn modal-btn-pdf" onclick="exportPDF()">PDF</button>
-      <button class="modal-btn modal-btn-word" onclick="exportWord()">Word</button>
+      <button class="modal-btn modal-btn-pdf" onclick="exportPDF()">PDF保存</button>
       <button class="modal-btn modal-btn-cancel" onclick="closeModal('saveModal')">キャンセル</button>
     </div>
   </div>
@@ -958,22 +956,6 @@ async function exportPDF() {
   pdf.save(`週案_${document.getElementById('month').value}月.pdf`);
 }
 
-function exportWord() {
-  closeModal('saveModal');
-  // HTML→Word（MHTMLとして保存）
-  const content = document.getElementById('plan').outerHTML;
-  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
-<head><meta charset="UTF-8"><style>
-body{font-family:'MS Mincho',serif;font-size:9pt;}
-table{border-collapse:collapse;width:100%;}
-td,th{border:1px solid #333;padding:2px;font-size:8pt;vertical-align:top;}
-</style></head><body>${content}</body></html>`;
-  const blob = new Blob([html], { type: 'application/msword' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `週案_${document.getElementById('month').value}月.doc`;
-  a.click();
-}
 
 // ---- 初期化 ----
 document.getElementById('startDate').addEventListener('change', () => { buildHeaders(); autoSave(); updateWeekLabel(); });
