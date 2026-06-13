@@ -182,10 +182,7 @@
       font-size: 9px; border: 1px solid #ddd; border-radius: 2px; padding: 1px;
     }
     .slot-divider { border-top: 1px dashed #aaa; margin: 3px 0; }
-    .add-btn {
-      width: 100%; font-size: 9px; border: none; background: #eaf4ff;
-      color: #2980b9; cursor: pointer; padding: 1px; border-radius: 2px; margin-top: 2px;
-    }
+    .add-btn { display: none; }
 
     .right-table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; }
     .right-table th, .right-table td { border: 1px solid #333; text-align: center; padding: 1px 3px; white-space: nowrap; }
@@ -214,10 +211,17 @@
     #csv-info { font-size: 11px; color: #666; margin-top: 8px; line-height: 1.6; }
 
     @media print {
-      body { display: block; }
+      @page { size: A4 landscape; margin: 5mm; }
+      body { display: block; font-size: 9px; }
       #sidebar, .controls { display: none; }
       #plan-wrap { padding: 0; overflow: visible; }
-      #plan { margin: 0; border: none; width: 100%; }
+      #plan { margin: 0; border: none; width: 100%; transform-origin: top left; }
+      table.main th, table.main td { padding: 1px; }
+      .cell-nerai, .cell-memo { min-height: 12px; font-size: 8px; }
+      .cell-tan, .cell-subj { font-size: 9px; }
+      .stamp-box { width: 22px; height: 22px; }
+      .biko-row td { height: 18px; }
+      .memo-row td { height: 28px; }
     }
   </style>
 </head>
@@ -440,7 +444,7 @@ function makeSlot(j, d, slot, data) {
   const wrap = document.createElement('div');
   if (slot === 1) wrap.style.cssText = 'padding-bottom:3px;';
 
-  const ratioSel = `<select class="cell-ratio" id="ratio_${j}_${d}_${slot}" onchange="calcWeeklyHours()">
+  const ratioSel = `<select class="cell-ratio" id="ratio_${j}_${d}_${slot}" onchange="onRatioChange(${j},${d},${slot})">
     <option value="1" ${ratio==='1'?'selected':''}>1</option>
     <option value="0.5" ${ratio==='0.5'?'selected':''}>0.5</option>
     <option value="0.67" ${ratio==='0.67'?'selected':''}>0.67</option>
@@ -477,6 +481,22 @@ function makeSlot(j, d, slot, data) {
     <textarea class="cell-memo" id="memo_${j}_${d}_${slot}" placeholder="学習メモ">${memo}</textarea>
   `;
   return wrap;
+}
+
+function onRatioChange(j, d, slot) {
+  if (slot !== 1) { calcWeeklyHours(); return; }
+  const ratio = document.getElementById(`ratio_${j}_${d}_${slot}`).value;
+  const wrap2 = document.getElementById(`wrap2_${j}_${d}`);
+  const btn = document.getElementById(`addbtn_${j}_${d}`);
+  if (ratio !== '1' && wrap2.style.display === 'none') {
+    wrap2.style.display = 'block';
+    btn.textContent = '－ 1教科に戻す';
+  } else if (ratio === '1' && wrap2.style.display !== 'none') {
+    wrap2.style.display = 'none';
+    btn.textContent = '＋ 2教科';
+    document.getElementById(`subj_${j}_${d}_2`).value = '';
+  }
+  calcWeeklyHours();
 }
 
 function onSubjChange(j, d, slot) {
@@ -628,10 +648,10 @@ function buildRightTable() {
     tr.innerHTML = `
       <td style="font-size:9px;">${grade}${kumi}組</td>
       <td style="text-align:left; font-size:10px;">${subj}</td>
-      <td><input type="number" id="w_yotei_${subj}" min="0" step="0.5" value="0" readonly style="background:#f0f8ff;"></td>
-      <td><input type="number" id="w_jisseki_${subj}" min="0" step="0.5" value="0"></td>
-      <td><input type="number" id="c_yotei_${subj}" min="0" step="0.5" value="0"></td>
-      <td><input type="number" id="c_jisseki_${subj}" min="0" step="0.5" value="0"></td>
+      <td><span id="w_yotei_${subj}" style="display:block;text-align:center;font-size:10px;background:#f0f8ff;padding:1px;">0</span></td>
+      <td><input type="text" id="w_jisseki_${subj}" value="0" style="width:28px;border:none;text-align:center;font-size:10px;background:transparent;outline:none;"></td>
+      <td><input type="text" id="c_yotei_${subj}" value="0" style="width:28px;border:none;text-align:center;font-size:10px;background:transparent;outline:none;"></td>
+      <td><input type="text" id="c_jisseki_${subj}" value="0" style="width:28px;border:none;text-align:center;font-size:10px;background:transparent;outline:none;"></td>
     `;
     tbody.appendChild(tr);
   });
@@ -657,7 +677,7 @@ function calcWeeklyHours() {
   }
   getSubjects().forEach(subj => {
     const el = document.getElementById(`w_yotei_${subj}`);
-    if (el) el.value = Math.round(totals[subj] * 100) / 100;
+    if (el) el.textContent = Math.round(totals[subj] * 100) / 100;
   });
   autoSave();
 }
