@@ -213,18 +213,33 @@
 
     @media print {
       @page { size: A4 landscape; margin: 4mm; }
-      body { display: block; }
+      html, body {
+        display: block !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
       #sidebar, .controls { display: none !important; }
-      #plan-wrap { padding: 0; overflow: visible; }
+      #main {
+        display: block !important;
+        height: auto !important;
+        overflow: visible !important;
+        flex: none !important;
+      }
+      #plan-wrap {
+        padding: 0 !important;
+        overflow: visible !important;
+        height: auto !important;
+        flex: none !important;
+      }
       #plan {
-        margin: 0; border: none;
-        width: 277mm;
-        transform: scale(0.82);
-        transform-origin: top left;
+        margin: 0 !important;
+        border: none !important;
+        width: 1050px !important;
+        zoom: 0.72;
       }
       textarea { white-space: pre-wrap; }
-      .biko-row td { height: 16px; }
-      .memo-row td { height: 24px; }
+      .biko-row td { height: 14px; }
+      .memo-row td { height: 20px; }
     }
   </style>
 </head>
