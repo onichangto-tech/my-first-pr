@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>週案作成ツール</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js"></script>
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-firestore.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyASroPtGFO0ixcoVy8NtRgtyHwcOcF_V4w",
+      authDomain: "weekly-plan-f4aa6.firebaseapp.com",
+      projectId: "weekly-plan-f4aa6",
+      storageBucket: "weekly-plan-f4aa6.firebasestorage.app",
+      messagingSenderId: "961220943174",
+      appId: "1:961220943174:web:07804d189c840b41ad9947"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+
+    // 先生IDを取得（初回はランダム生成して保存）
+    function getTeacherId() {
+      let id = localStorage.getItem('teacherId');
+      if (!id) {
+        id = 'teacher_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('teacherId', id);
+      }
+      return id;
+    }
+
+    const teacherId = getTeacherId();
+
+    // Firebase にデータ保存
+    window.firebaseSave = async function(weekId, data) {
+      try {
+        await setDoc(doc(db, 'teachers', teacherId, 'weeks', weekId), data);
+      } catch(e) { console.error('保存エラー:', e); }
+    };
+
+    // Firebase から全週データを読み込み
+    window.firebaseLoadAll = async function() {
+      try {
+        const snap = await getDocs(collection(db, 'teachers', teacherId, 'weeks'));
+        const weeks = [];
+        snap.forEach(d => weeks.push({ id: d.id, ...d.data() }));
+        return weeks;
+      } catch(e) { console.error('読み込みエラー:', e); return []; }
+    };
+
+    // Firebase から1週分読み込み
+    window.firebaseLoad = async function(weekId) {
+      try {
+        const snap = await getDoc(doc(db, 'teachers', teacherId, 'weeks', weekId));
+        return snap.exists() ? snap.data() : null;
+      } catch(e) { console.error('読み込みエラー:', e); return null; }
+    };
+
+    // 年間計画も Firebase に保存・読み込み
+    window.firebaseSavePlan = async function(plan) {
+      try {
+        await setDoc(doc(db, 'teachers', teacherId, 'settings', 'annualPlan'), { plan });
+      } catch(e) { console.error(e); }
+    };
+    window.firebaseLoadPlan = async function() {
+      try {
+        const snap = await getDoc(doc(db, 'teachers', teacherId, 'settings', 'annualPlan'));
+        return snap.exists() ? snap.data().plan : null;
+      } catch(e) { return null; }
+    };
+
+    // 匿名ログイン後にアプリを初期化
+    signInAnonymously(auth).then(async () => {
+      console.log('Firebase接続OK、先生ID:', teacherId);
+      // 年間計画を読み込み
+      const plan = await window.firebaseLoadPlan();
+      if (plan) {
+        annualPlan = plan;
+        localStorage.setItem('annualPlan', JSON.stringify(plan));
+      }
+      // 週一覧を読み込み
+      const weeks = await window.firebaseLoadAll();
+      if (weeks.length > 0) {
+        // Firebase のデータで週一覧を更新
+        const localWeeks = weeks.map(w => ({ id: w.id, label: w.label || w.id, data: w }));
+        localStorage.setItem('weeks', JSON.stringify(localWeeks));
+      }
+      // アプリ初期化
+      initApp();
+    }).catch(e => {
+      console.error('Firebase接続失敗:', e);
+      initApp(); // オフラインでも動くように
+    });
+  </script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Hiragino Sans', 'Meiryo', sans-serif; font-size: 11px; background: #f0f0f0; display: flex; height: 100vh; overflow: hidden; }
+
+    /* サイドバー */
+    #sidebar {
+      width: 200px; min-width: 200px; background: #2c3e50; color: white;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #sidebar h2 { font-size: 13px; padding: 12px; background: #1a252f; border-bottom: 1px solid #34495e; }
+    #week-list { flex: 1; overflow-y: auto; }
+    .week-item {
+      padding: 8px 12px; cursor: pointer; font-size: 11px; border-bottom: 1px solid #34495e;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .week-item:hover { background: #34495e; }
+    .week-item.active { background: #3498db; }
+    .week-item .del-btn { color: #e74c3c; cursor: pointer; font-size: 13px; padding: 0 2px; }
+    #sidebar-footer { padding: 10px; }
+    .side-btn {
+      width: 100%; padding: 7px; border: none; border-radius: 4px; cursor: pointer;
+      font-size: 11px; font-weight: bold; margin-bottom: 6px;
+    }
+    .side-btn-new { background: #27ae60; color: white; }
+    .side-btn-csv { background: #8e44ad; color: white; }
+
+    /* メインエリア */
+    #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    .controls {
+      background: #34495e; color: white; padding: 8px 12px;
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap; flex-shrink: 0;
+    }
+    .controls label { font-size: 11px; }
+    .controls input, .controls select {
+      padding: 3px 6px; border-radius: 4px; border: none; font-size: 11px;
+    }
+    .btn { padding: 5px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; }
+    .btn-pdf { background: #e74c3c; color: white; }
+    .btn-word { background: #2980b9; color: white; }
+
+    #plan-wrap { flex: 1; overflow: auto; padding: 10px; }
+
+    #plan {
+      width: 1050px; background: white;
+      border: 1px solid #999; padding: 8px; margin: 0 auto;
+    }
+
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+    .stamp-boxes { display: flex; gap: 4px; align-items: flex-end; }
+    .stamp-wrap { text-align: center; }
+    .stamp-label { font-size: 9px; margin-bottom: 1px; }
+    .stamp-box { width: 30px; height: 30px; border: 1px solid #333; }
+
+    table.main { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    table.main th, table.main td { border: 1px solid #333; vertical-align: top; padding: 2px; }
+    table.main th { background: #f5f5f5; text-align: center; font-weight: normal; font-size: 10px; }
+    .col-jigen { width: 34px; }
+
+    .cell-subj {
+      width: 100%; font-size: 10px; border: none; border-bottom: 1px solid #ddd;
+      outline: none; background: #f9f9ff; margin-bottom: 2px; padding: 1px 2px;
+    }
+    .cell-tan {
+      width: 100%; font-size: 10px; border: none; border-bottom: 1px solid #eee;
+      outline: none; margin-bottom: 1px; padding: 1px 2px; color: #333;
+    }
+    .nerai-row { display: flex; align-items: flex-start; gap: 1px; margin-bottom: 1px; }
+    .nerai-maru { font-size: 10px; line-height: 1.4; flex-shrink: 0; }
+    .cell-nerai {
+      flex: 1; font-size: 10px; border: none; outline: none; resize: none;
+      min-height: 18px; padding: 0; line-height: 1.4; background: transparent;
+    }
+    .cell-memo {
+      width: 100%; font-size: 9px; border: none; border-top: 1px dashed #ddd;
+      outline: none; resize: none; min-height: 16px; padding: 1px 2px;
+      color: #666; background: transparent; margin-top: 2px;
+    }
+    .ratio-row { display: flex; align-items: center; gap: 2px; margin-bottom: 2px; }
+    .ratio-label { font-size: 9px; color: #888; }
+    .cell-ratio {
+      font-size: 9px; border: 1px solid #ddd; border-radius: 2px; padding: 1px;
+    }
+    .slot-divider { border-top: 1px dashed #aaa; margin: 3px 0; }
+    .add-btn {
+      width: 100%; font-size: 9px; border: none; background: #eaf4ff;
+      color: #2980b9; cursor: pointer; padding: 1px; border-radius: 2px; margin-top: 2px;
+    }
+
+    .right-table { width: 100%; border-collapse: collapse; font-size: 10px; table-layout: fixed; }
+    .right-table th, .right-table td { border: 1px solid #333; text-align: center; padding: 1px 3px; white-space: nowrap; }
+    .right-table th { background: #f5f5f5; }
+    .right-table input { width: 28px; border: none; text-align: center; font-size: 10px; background: transparent; outline: none; }
+    .right-table td:first-child, .right-table th:first-child { width: 58px; font-size: 9px; }
+
+    .biko-row td { height: 30px; }
+    .memo-row td { height: 50px; }
+
+    /* モーダル */
+    .modal-overlay {
+      display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal { background: white; border-radius: 8px; padding: 20px; min-width: 300px; }
+    .modal h3 { margin-bottom: 12px; font-size: 14px; }
+    .modal-btns { display: flex; gap: 10px; margin-top: 16px; justify-content: center; }
+    .modal-btn { padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; }
+    .modal-btn-pdf { background: #e74c3c; color: white; }
+    .modal-btn-word { background: #2980b9; color: white; }
+    .modal-btn-cancel { background: #95a5a6; color: white; }
+
+    /* 年間計画モーダル */
+    #csv-info { font-size: 11px; color: #666; margin-top: 8px; line-height: 1.6; }
+
+    @media print {
+      body { display: block; }
+      #sidebar, .controls { display: none; }
+      #plan-wrap { padding: 0; overflow: visible; }
+      #plan { margin: 0; border: none; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- サイドバー：週一覧 -->
+<div id="sidebar">
+  <h2>📅 週案一覧</h2>
+  <div id="week-list"></div>
+  <div id="sidebar-footer">
+    <button class="side-btn side-btn-new" onclick="newWeek()">＋ 新しい週を追加</button>
+    <button class="side-btn side-btn-csv" onclick="showCsvModal()">📂 年間計画をアップ</button>
+  </div>
+</div>
+
+<!-- メインエリア -->
+<div id="main">
+  <div class="controls">
+    <label>月: <input type="number" id="month" min="1" max="12" value="6" style="width:44px"></label>
+    <label>開始日: <input type="date" id="startDate" style="width:135px"></label>
+    <label>学年: <select id="grade">
+      <option>1年</option><option>2年</option><option>3年</option>
+      <option>4年</option><option>5年</option><option>6年</option>
+    </select></label>
+    <label>組: <input type="number" id="kumi" min="1" max="9" value="1" style="width:36px"> 組</label>
+    <label>担任: <input type="text" id="teacher" value="鬼澤 信一" style="width:90px"></label>
+    <button class="btn btn-pdf" onclick="showSaveModal()">💾 保存・出力</button>
+  </div>
+
+  <div id="plan-wrap">
+    <div id="plan">
+      <div class="header">
+        <div style="display:flex; gap:12px; align-items:center; font-size:12px;">
+          <span id="disp-month"></span>
+          <span id="disp-range"></span>
+        </div>
+        <div style="display:flex; align-items:flex-end; gap:8px;">
+          <span id="disp-teacher" style="font-size:11px;"></span>
+          <div class="stamp-boxes">
+            <div class="stamp-wrap"><div class="stamp-label">校長</div><div class="stamp-box"></div></div>
+            <div class="stamp-wrap"><div class="stamp-label">副校長</div><div class="stamp-box"></div></div>
+            <div class="stamp-wrap"><div class="stamp-label">印</div><div class="stamp-box"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:4px;">
+        <div style="flex:1; overflow:hidden;">
+          <table class="main" id="mainTable">
+            <colgroup>
+              <col class="col-jigen">
+              <col><col><col><col><col><col>
+            </colgroup>
+            <thead>
+              <tr>
+                <th></th>
+                <th id="h0"></th><th id="h1"></th><th id="h2"></th>
+                <th id="h3"></th><th id="h4"></th><th id="h5"></th>
+              </tr>
+              <tr>
+                <th style="font-size:10px; color:#333; white-space:nowrap; min-width:36px; padding:2px 4px;">行事</th>
+                <th style="overflow:hidden;"><input id="asa_0" placeholder="行事・会議など" style="width:100%;font-size:10px;border:none;outline:none;background:transparent;"></th>
+                <th style="overflow:hidden;"><input id="asa_1" placeholder="行事・会議など" style="width:100%;font-size:10px;border:none;outline:none;background:transparent;"></th>
+                <th style="overflow:hidden;"><input id="asa_2" placeholder="行事・会議など" style="width:100%;font-size:10px;border:none;outline:none;background:transparent;"></th>
+                <th style="overflow:hidden;"><input id="asa_3" placeholder="行事・会議など" style="width:100%;font-size:10px;border:none;outline:none;background:transparent;"></th>
+                <th style="overflow:hidden;"><input id="asa_4" placeholder="行事・会議など" style="width:100%;font-size:10px;border:none;outline:none;background:transparent;"></th>
+                <th style="overflow:hidden;"><input id="asa_5" placeholder="行事・会議など" style="width:100%;font-size:10px;border:none;outline:none;background:transparent;"></th>
+              </tr>
+            </thead>
+            <tbody id="mainBody"></tbody>
+          </table>
+        </div>
+        <div style="width:230px; flex-shrink:0;">
+          <div class="stamp-boxes" style="justify-content:flex-end; margin-bottom:4px; visibility:hidden;">
+            <div class="stamp-wrap"><div class="stamp-label">　</div><div class="stamp-box"></div></div>
+          </div>
+          <table class="right-table" id="rightTable">
+            <thead>
+              <tr>
+                <th rowspan="2">年組</th><th rowspan="2">教科</th>
+                <th colspan="2">本週</th><th colspan="2">累計</th>
+              </tr>
+              <tr><th>予定</th><th>実績</th><th>予定</th><th>実績</th></tr>
+            </thead>
+            <tbody id="rightBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 保存・出力モーダル -->
+<div class="modal-overlay" id="saveModal">
+  <div class="modal">
+    <h3>保存・出力形式を選択</h3>
+    <p style="font-size:12px; color:#666;">週案データはブラウザに自動保存されています。<br>ファイルとして出力する形式を選んでください。</p>
+    <div class="modal-btns">
+      <button class="modal-btn modal-btn-pdf" onclick="exportPDF()">PDF</button>
+      <button class="modal-btn modal-btn-word" onclick="exportWord()">Word</button>
+      <button class="modal-btn modal-btn-cancel" onclick="closeModal('saveModal')">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- 年間計画アップモーダル -->
+<div class="modal-overlay" id="csvModal">
+  <div class="modal" style="max-width:420px;">
+    <h3>📂 年間計画をアップロード</h3>
+    <p id="csv-info">
+      CSVファイル（文字コード：UTF-8）を用意してください。<br>
+      以下の形式で作成してください：<br><br>
+      <strong>教科, 単元名, ねらい</strong><br>
+      国語, 春のうた, 言葉の意味を理解する<br>
+      国語, 春のうた, 音読を工夫する<br>
+      算数, たし算, 繰り上がりの計算ができる<br><br>
+      ※Excelで作ってCSV保存するのが簡単です。
+    </p>
+    <input type="file" id="csvInput" accept=".csv" style="margin-top:10px; font-size:11px;">
+    <div class="modal-btns">
+      <button class="modal-btn" style="background:#8e44ad;color:white;" onclick="loadCSV()">読み込む</button>
+      <button class="modal-btn modal-btn-cancel" onclick="closeModal('csvModal')">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const DAYS = ['月','火','水','木','金','土'];
+const JIGEN = 6;
+const SUBJECTS_BY_GRADE = {
+  '1年': ['国語','算数','生活','音楽','図工','体育','道徳','学活','行事'],
+  '2年': ['国語','算数','生活','音楽','図工','体育','道徳','学活','行事'],
+  '3年': ['国語','社会','算数','理科','音楽','図工','体育','道徳','外国語活動','総合','学活','行事'],
+  '4年': ['国語','社会','算数','理科','音楽','図工','体育','道徳','外国語活動','総合','学活','行事'],
+  '5年': ['国語','社会','算数','理科','音楽','図工','家庭','体育','道徳','外国語','総合','学活','行事'],
+  '6年': ['国語','社会','算数','理科','音楽','図工','家庭','体育','道徳','外国語','総合','学活','行事'],
+};
+
+// 年間計画データ { '国語': [ { unit:'春のうた', goals:['...','...'] } ] }
+let annualPlan = JSON.parse(localStorage.getItem('annualPlan') || '{}');
+
+// 現在編集中の週ID
+let currentWeekId = null;
+
+function getSubjects() {
+  return SUBJECTS_BY_GRADE[document.getElementById('grade').value] || SUBJECTS_BY_GRADE['1年'];
+}
+
+function getWeekDates(startDate) {
+  const dates = [];
+  const d = new Date(startDate);
+  for (let i = 0; i < 6; i++) {
+    const nd = new Date(d);
+    nd.setDate(d.getDate() + i);
+    dates.push(nd);
+  }
+  return dates;
+}
+
+function fmt(d) { return `${d.getMonth()+1}月${d.getDate()}日`; }
+
+function buildHeaders() {
+  const start = document.getElementById('startDate').value;
+  const month = document.getElementById('month').value;
+  document.getElementById('disp-month').textContent = month + '月';
+  document.getElementById('disp-teacher').textContent = document.getElementById('teacher').value;
+  if (start) {
+    const dates = getWeekDates(start);
+    document.getElementById('disp-range').textContent = `${fmt(dates[0])} ～ ${fmt(dates[5])}`;
+    dates.forEach((d, i) => {
+      const el = document.getElementById('h' + i);
+      if (el) el.textContent = `${d.getDate()}日（${DAYS[i]}）`;
+    });
+  }
+}
+
+// ---- セル構築 ----
+function makeSubjectOptions(selected) {
+  let opts = `<option value="">－</option>`;
+  getSubjects().forEach(s => {
+    opts += `<option value="${s}" ${s === selected ? 'selected':''}>${s}</option>`;
+  });
+  return opts;
+}
+
+function makeUnitOptions(subj, selected) {
+  const units = (annualPlan[subj] || []).map(u => u.unit);
+  if (!units.length) return '';
+  let opts = `<option value="">単元を選ぶ</option>`;
+  units.forEach(u => {
+    opts += `<option value="${u}" ${u === selected ? 'selected':''}>${u}</option>`;
+  });
+  return opts;
+}
+
+function makeGoalOptions(subj, unit, selected) {
+  const entry = (annualPlan[subj] || []).find(u => u.unit === unit);
+  if (!entry || !entry.goals.length) return '';
+  let opts = `<option value="">ねらいを選ぶ</option>`;
+  entry.goals.forEach(g => {
+    opts += `<option value="${g}" ${g === selected ? 'selected':''}>${g}</option>`;
+  });
+  opts += `<option value="__custom__">手動入力する</option>`;
+  return opts;
+}
+
+function makeSlot(j, d, slot, data) {
+  data = data || {};
+  const subj = data.subj || '';
+  const unit = data.unit || '';
+  const nerai = data.nerai || '';
+  const memo = data.memo || '';
+  const ratio = data.ratio || (slot === 1 ? '1' : '0.5');
+
+  const hasUnits = subj && annualPlan[subj] && annualPlan[subj].length > 0;
+  const hasGoals = hasUnits && unit && (annualPlan[subj].find(u => u.unit === unit)?.goals.length > 0);
+  const unitOpts = hasUnits ? makeUnitOptions(subj, unit) : '';
+  const goalOpts = hasGoals ? makeGoalOptions(subj, unit, nerai) : '';
+
+  const wrap = document.createElement('div');
+  if (slot === 1) wrap.style.cssText = 'padding-bottom:3px;';
+
+  const ratioSel = `<select class="cell-ratio" id="ratio_${j}_${d}_${slot}" onchange="calcWeeklyHours()">
+    <option value="1" ${ratio==='1'?'selected':''}>1</option>
+    <option value="0.5" ${ratio==='0.5'?'selected':''}>0.5</option>
+    <option value="0.67" ${ratio==='0.67'?'selected':''}>0.67</option>
+    <option value="0.33" ${ratio==='0.33'?'selected':''}>0.33</option>
+  </select>`;
+
+  wrap.innerHTML = `
+    <div class="ratio-row">
+      <select class="cell-subj" id="subj_${j}_${d}_${slot}" onchange="onSubjChange(${j},${d},${slot})">
+        ${makeSubjectOptions(subj)}
+      </select>
+      <span class="ratio-label">時数</span>${ratioSel}
+    </div>
+    <div id="unit-row_${j}_${d}_${slot}" style="${hasUnits ? '' : 'display:none;'}">
+      <select class="cell-tan" id="unit_${j}_${d}_${slot}" onchange="onUnitChange(${j},${d},${slot})">
+        ${unitOpts}
+      </select>
+    </div>
+    <input type="text" class="cell-tan" id="tan_${j}_${d}_${slot}" placeholder="単元名"
+      style="${hasUnits ? 'display:none;' : ''}"
+      value="${unit && !hasUnits ? unit : (hasUnits ? '' : unit)}">
+    <div class="nerai-row">
+      <span class="nerai-maru">○</span>
+      <div style="flex:1;">
+        <div id="nerai-sel-row_${j}_${d}_${slot}" style="${hasGoals ? '' : 'display:none;'}">
+          <select class="cell-tan" id="nerai_sel_${j}_${d}_${slot}" onchange="onNeraiSelChange(${j},${d},${slot})">
+            ${goalOpts}
+          </select>
+        </div>
+        <textarea class="cell-nerai" id="nerai_${j}_${d}_${slot}" placeholder="ねらい"
+          style="${hasGoals ? 'display:none;' : ''}">${nerai}</textarea>
+      </div>
+    </div>
+    <textarea class="cell-memo" id="memo_${j}_${d}_${slot}" placeholder="学習メモ">${memo}</textarea>
+  `;
+  return wrap;
+}
+
+function onSubjChange(j, d, slot) {
+  const subj = document.getElementById(`subj_${j}_${d}_${slot}`).value;
+  const hasUnits = subj && annualPlan[subj] && annualPlan[subj].length > 0;
+  const unitRow = document.getElementById(`unit-row_${j}_${d}_${slot}`);
+  const tanInput = document.getElementById(`tan_${j}_${d}_${slot}`);
+  const unitSel = document.getElementById(`unit_${j}_${d}_${slot}`);
+
+  if (hasUnits) {
+    unitSel.innerHTML = makeUnitOptions(subj, '');
+    unitRow.style.display = '';
+    tanInput.style.display = 'none';
+    onUnitChange(j, d, slot);
+  } else {
+    unitRow.style.display = 'none';
+    tanInput.style.display = '';
+    document.getElementById(`nerai-sel-row_${j}_${d}_${slot}`).style.display = 'none';
+    document.getElementById(`nerai_${j}_${d}_${slot}`).style.display = '';
+  }
+  calcWeeklyHours();
+}
+
+function onUnitChange(j, d, slot) {
+  const subj = document.getElementById(`subj_${j}_${d}_${slot}`).value;
+  const unitSel = document.getElementById(`unit_${j}_${d}_${slot}`);
+  const unit = unitSel ? unitSel.value : '';
+  const entry = (annualPlan[subj] || []).find(u => u.unit === unit);
+  const neraiSelRow = document.getElementById(`nerai-sel-row_${j}_${d}_${slot}`);
+  const neraiTa = document.getElementById(`nerai_${j}_${d}_${slot}`);
+  const neraiSel = document.getElementById(`nerai_sel_${j}_${d}_${slot}`);
+
+  if (entry && entry.goals.length) {
+    neraiSel.innerHTML = makeGoalOptions(subj, unit, '');
+    neraiSelRow.style.display = '';
+    neraiTa.style.display = 'none';
+    neraiTa.value = entry.goals[0] || '';
+    neraiSel.value = entry.goals[0] || '';
+  } else {
+    neraiSelRow.style.display = 'none';
+    neraiTa.style.display = '';
+  }
+}
+
+function onNeraiSelChange(j, d, slot) {
+  const val = document.getElementById(`nerai_sel_${j}_${d}_${slot}`).value;
+  const ta = document.getElementById(`nerai_${j}_${d}_${slot}`);
+  if (val === '__custom__') {
+    document.getElementById(`nerai-sel-row_${j}_${d}_${slot}`).style.display = 'none';
+    ta.style.display = '';
+    ta.value = '';
+    ta.focus();
+  } else {
+    ta.value = val;
+  }
+}
+
+function buildMainBody() {
+  const tbody = document.getElementById('mainBody');
+  tbody.innerHTML = '';
+  for (let j = 0; j < JIGEN; j++) {
+    const tr = document.createElement('tr');
+    const tdLabel = document.createElement('td');
+    tdLabel.style.cssText = 'text-align:center; vertical-align:middle; font-size:10px;';
+    tdLabel.textContent = `${j+1}時限`;
+    tr.appendChild(tdLabel);
+
+    for (let d = 0; d < 6; d++) {
+      const td = document.createElement('td');
+      td.style.padding = '2px';
+      td.appendChild(makeSlot(j, d, 1));
+
+      const wrap2 = document.createElement('div');
+      wrap2.id = `wrap2_${j}_${d}`;
+      wrap2.style.display = 'none';
+      const divider = document.createElement('div');
+      divider.className = 'slot-divider';
+      wrap2.appendChild(divider);
+      wrap2.appendChild(makeSlot(j, d, 2));
+      td.appendChild(wrap2);
+
+      const addBtn = document.createElement('button');
+      addBtn.className = 'add-btn';
+      addBtn.id = `addbtn_${j}_${d}`;
+      addBtn.textContent = '＋ 2教科';
+      addBtn.onclick = (function(jj, dd) { return function() {
+        const w = document.getElementById(`wrap2_${jj}_${dd}`);
+        const btn = document.getElementById(`addbtn_${jj}_${dd}`);
+        if (w.style.display === 'none') {
+          w.style.display = 'block';
+          btn.textContent = '－ 1教科に戻す';
+          document.getElementById(`ratio_${jj}_${dd}_1`).value = '0.5';
+        } else {
+          w.style.display = 'none';
+          btn.textContent = '＋ 2教科';
+          document.getElementById(`ratio_${jj}_${dd}_1`).value = '1';
+          document.getElementById(`subj_${jj}_${dd}_2`).value = '';
+        }
+        calcWeeklyHours();
+      }; })(j, d);
+      td.appendChild(addBtn);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+
+  // 備考行
+  const bikoTr = document.createElement('tr');
+  bikoTr.className = 'biko-row';
+  const bikoLabel = document.createElement('td');
+  bikoLabel.style.cssText = 'text-align:center; vertical-align:middle; font-size:10px;';
+  bikoLabel.textContent = '備考';
+  bikoTr.appendChild(bikoLabel);
+  for (let d = 0; d < 6; d++) {
+    const td = document.createElement('td');
+    const ta = document.createElement('textarea');
+    ta.className = 'cell-memo';
+    ta.id = `biko_${d}`;
+    ta.style.minHeight = '26px';
+    ta.style.borderTop = 'none';
+    td.appendChild(ta);
+    bikoTr.appendChild(td);
+  }
+  tbody.appendChild(bikoTr);
+
+  // メモ行
+  const memoTr = document.createElement('tr');
+  memoTr.className = 'memo-row';
+  const memoTd = document.createElement('td');
+  memoTd.colSpan = 7;
+  const memoTa = document.createElement('textarea');
+  memoTa.className = 'cell-memo';
+  memoTa.id = 'weekmemo';
+  memoTa.style.minHeight = '46px';
+  memoTa.style.borderTop = 'none';
+  memoTa.placeholder = '所見・メモ欄';
+  memoTd.appendChild(memoTa);
+  memoTr.appendChild(memoTd);
+  tbody.appendChild(memoTr);
+}
+
+function buildRightTable() {
+  const grade = document.getElementById('grade').value;
+  const kumi = document.getElementById('kumi').value;
+  const tbody = document.getElementById('rightBody');
+  tbody.innerHTML = '';
+  getSubjects().forEach(subj => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-size:9px;">${grade}${kumi}組</td>
+      <td style="text-align:left; font-size:10px;">${subj}</td>
+      <td><input type="number" id="w_yotei_${subj}" min="0" step="0.5" value="0" readonly style="background:#f0f8ff;"></td>
+      <td><input type="number" id="w_jisseki_${subj}" min="0" step="0.5" value="0"></td>
+      <td><input type="number" id="c_yotei_${subj}" min="0" step="0.5" value="0"></td>
+      <td><input type="number" id="c_jisseki_${subj}" min="0" step="0.5" value="0"></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function calcWeeklyHours() {
+  const totals = {};
+  getSubjects().forEach(s => totals[s] = 0);
+  for (let j = 0; j < JIGEN; j++) {
+    for (let d = 0; d < 6; d++) {
+      [1, 2].forEach(slot => {
+        const subjEl = document.getElementById(`subj_${j}_${d}_${slot}`);
+        const ratioEl = document.getElementById(`ratio_${j}_${d}_${slot}`);
+        if (!subjEl || !ratioEl) return;
+        const wrap2 = document.getElementById(`wrap2_${j}_${d}`);
+        if (slot === 2 && wrap2 && wrap2.style.display === 'none') return;
+        const subj = subjEl.value;
+        if (subj && totals[subj] !== undefined) {
+          totals[subj] += parseFloat(ratioEl.value) || 0;
+        }
+      });
+    }
+  }
+  getSubjects().forEach(subj => {
+    const el = document.getElementById(`w_yotei_${subj}`);
+    if (el) el.value = Math.round(totals[subj] * 100) / 100;
+  });
+  autoSave();
+}
+
+// ---- 週管理 ----
+function getWeeks() {
+  return JSON.parse(localStorage.getItem('weeks') || '[]');
+}
+function saveWeeks(weeks) {
+  localStorage.setItem('weeks', JSON.stringify(weeks));
+}
+
+function renderWeekList() {
+  const weeks = getWeeks();
+  const list = document.getElementById('week-list');
+  list.innerHTML = '';
+  if (!weeks.length) {
+    list.innerHTML = '<div style="padding:12px; font-size:11px; color:#aaa;">週案がありません</div>';
+    return;
+  }
+  weeks.forEach(w => {
+    const div = document.createElement('div');
+    div.className = 'week-item' + (w.id === currentWeekId ? ' active' : '');
+    div.innerHTML = `
+      <span onclick="loadWeek('${w.id}')">${w.label || w.id}</span>
+      <span class="del-btn" onclick="deleteWeek('${w.id}')">✕</span>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function getCurrentData() {
+  const data = {
+    month: document.getElementById('month').value,
+    startDate: document.getElementById('startDate').value,
+    grade: document.getElementById('grade').value,
+    kumi: document.getElementById('kumi').value,
+    teacher: document.getElementById('teacher').value,
+    cells: {}, subjects: {}
+  };
+  for (let j = 0; j < JIGEN; j++) {
+    for (let d = 0; d < 6; d++) {
+      [1, 2].forEach(slot => {
+        const get = id => document.getElementById(id)?.value || '';
+        data.cells[`subj_${j}_${d}_${slot}`] = get(`subj_${j}_${d}_${slot}`);
+        data.cells[`ratio_${j}_${d}_${slot}`] = get(`ratio_${j}_${d}_${slot}`);
+        data.cells[`unit_${j}_${d}_${slot}`] = get(`unit_${j}_${d}_${slot}`);
+        data.cells[`tan_${j}_${d}_${slot}`] = get(`tan_${j}_${d}_${slot}`);
+        data.cells[`nerai_${j}_${d}_${slot}`] = get(`nerai_${j}_${d}_${slot}`);
+        data.cells[`memo_${j}_${d}_${slot}`] = get(`memo_${j}_${d}_${slot}`);
+      });
+      data.cells[`wrap2_${j}_${d}`] = document.getElementById(`wrap2_${j}_${d}`)?.style.display || 'none';
+    }
+  }
+  for (let d = 0; d < 6; d++) {
+    data.cells[`biko_${d}`] = document.getElementById(`biko_${d}`)?.value || '';
+    data.cells[`asa_${d}`] = document.getElementById(`asa_${d}`)?.value || '';
+  }
+  data.cells['weekmemo'] = document.getElementById('weekmemo')?.value || '';
+  getSubjects().forEach(subj => {
+    ['w_jisseki','c_yotei','c_jisseki'].forEach(k => {
+      data.subjects[`${k}_${subj}`] = document.getElementById(`${k}_${subj}`)?.value || '0';
+    });
+  });
+  return data;
+}
+
+function autoSave() {
+  if (!currentWeekId) return;
+  const data = getCurrentData();
+  const weeks = getWeeks();
+  const idx = weeks.findIndex(w => w.id === currentWeekId);
+  if (idx >= 0) {
+    weeks[idx].data = data;
+    saveWeeks(weeks);
+  }
+  // Firebaseにも保存
+  if (window.firebaseSave) {
+    window.firebaseSave(currentWeekId, { ...data, label: weeks[idx]?.label || currentWeekId });
+  }
+}
+
+function newWeek() {
+  if (currentWeekId) autoSave();
+  const today = new Date();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  const id = 'week_' + Date.now();
+  const label = `${monday.getMonth()+1}月${monday.getDate()}日〜`;
+  const weeks = getWeeks();
+  weeks.unshift({ id, label, data: null });
+  saveWeeks(weeks);
+  currentWeekId = id;
+
+  document.getElementById('startDate').value = monday.toISOString().split('T')[0];
+  document.getElementById('month').value = monday.getMonth() + 1;
+  buildMainBody();
+  buildRightTable();
+  buildHeaders();
+  renderWeekList();
+}
+
+function loadWeek(id) {
+  if (currentWeekId) autoSave();
+  const weeks = getWeeks();
+  const week = weeks.find(w => w.id === id);
+  if (!week || !week.data) {
+    currentWeekId = id;
+    buildMainBody();
+    buildRightTable();
+    buildHeaders();
+    renderWeekList();
+    return;
+  }
+  currentWeekId = id;
+  const data = week.data;
+  document.getElementById('month').value = data.month;
+  document.getElementById('startDate').value = data.startDate;
+  document.getElementById('grade').value = data.grade;
+  document.getElementById('kumi').value = data.kumi;
+  document.getElementById('teacher').value = data.teacher;
+  buildMainBody();
+  buildRightTable();
+  buildHeaders();
+
+  // セルデータを復元
+  Object.entries(data.cells || {}).forEach(([key, val]) => {
+    if (key.startsWith('wrap2_')) {
+      const el = document.getElementById(key);
+      if (el) el.style.display = val;
+      const parts = key.replace('wrap2_','').split('_');
+      const btn = document.getElementById(`addbtn_${parts[0]}_${parts[1]}`);
+      if (btn) btn.textContent = val === 'none' ? '＋ 2教科' : '－ 1教科に戻す';
+    } else {
+      const el = document.getElementById(key);
+      if (el) el.value = val;
+    }
+  });
+  // 教科ドロップダウンの表示更新
+  for (let j = 0; j < JIGEN; j++) {
+    for (let d = 0; d < 6; d++) {
+      [1, 2].forEach(slot => onSubjChange(j, d, slot));
+    }
+  }
+  // ねらいを再セット
+  Object.entries(data.cells || {}).forEach(([key, val]) => {
+    if (key.startsWith('nerai_') && !key.startsWith('nerai_sel')) {
+      const el = document.getElementById(key);
+      if (el) el.value = val;
+    }
+  });
+
+  if (data.subjects) {
+    Object.entries(data.subjects).forEach(([key, val]) => {
+      const el = document.getElementById(key);
+      if (el) el.value = val;
+    });
+  }
+  calcWeeklyHours();
+  renderWeekList();
+}
+
+function deleteWeek(id) {
+  if (!confirm('この週案を削除しますか？')) return;
+  let weeks = getWeeks();
+  weeks = weeks.filter(w => w.id !== id);
+  saveWeeks(weeks);
+  if (currentWeekId === id) {
+    currentWeekId = null;
+    if (weeks.length) loadWeek(weeks[0].id);
+    else newWeek();
+  } else {
+    renderWeekList();
+  }
+}
+
+// ---- 年間計画CSV読み込み ----
+function showCsvModal() { document.getElementById('csvModal').classList.add('show'); }
+function loadCSV() {
+  const file = document.getElementById('csvInput').files[0];
+  if (!file) { alert('ファイルを選んでください'); return; }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const lines = ev.target.result.split('\n').filter(l => l.trim());
+    const plan = {};
+    lines.slice(1).forEach(line => {
+      const cols = line.split(',').map(c => c.trim().replace(/^"|"$/g,''));
+      if (cols.length < 3) return;
+      const [subj, unit, goal] = cols;
+      if (!plan[subj]) plan[subj] = [];
+      let entry = plan[subj].find(u => u.unit === unit);
+      if (!entry) { entry = { unit, goals: [] }; plan[subj].push(entry); }
+      if (goal && !entry.goals.includes(goal)) entry.goals.push(goal);
+    });
+    annualPlan = plan;
+    localStorage.setItem('annualPlan', JSON.stringify(plan));
+    if (window.firebaseSavePlan) window.firebaseSavePlan(plan);
+    closeModal('csvModal');
+    alert('年間計画を読み込みました！どの端末でも自動的に反映されます。');
+    buildMainBody();
+    buildRightTable();
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+// ---- 出力 ----
+function showSaveModal() { document.getElementById('saveModal').classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+function exportPDF() {
+  closeModal('saveModal');
+  const el = document.getElementById('plan');
+  html2pdf().set({
+    margin: 5,
+    filename: `週案_${document.getElementById('month').value}月.pdf`,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2 },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
+  }).from(el).save();
+}
+
+function exportWord() {
+  closeModal('saveModal');
+  // HTML→Word（MHTMLとして保存）
+  const content = document.getElementById('plan').outerHTML;
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head><meta charset="UTF-8"><style>
+body{font-family:'MS Mincho',serif;font-size:9pt;}
+table{border-collapse:collapse;width:100%;}
+td,th{border:1px solid #333;padding:2px;font-size:8pt;vertical-align:top;}
+</style></head><body>${content}</body></html>`;
+  const blob = new Blob([html], { type: 'application/msword' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `週案_${document.getElementById('month').value}月.doc`;
+  a.click();
+}
+
+// ---- 初期化 ----
+document.getElementById('startDate').addEventListener('change', () => { buildHeaders(); autoSave(); updateWeekLabel(); });
+document.getElementById('month').addEventListener('input', () => { buildHeaders(); autoSave(); });
+document.getElementById('teacher').addEventListener('input', () => { buildHeaders(); autoSave(); });
+document.getElementById('grade').addEventListener('change', () => { buildMainBody(); buildRightTable(); buildHeaders(); });
+document.getElementById('kumi').addEventListener('change', () => { buildRightTable(); autoSave(); });
+
+function updateWeekLabel() {
+  if (!currentWeekId) return;
+  const weeks = getWeeks();
+  const idx = weeks.findIndex(w => w.id === currentWeekId);
+  if (idx >= 0) {
+    const start = document.getElementById('startDate').value;
+    if (start) {
+      const d = new Date(start);
+      weeks[idx].label = `${d.getMonth()+1}月${d.getDate()}日〜`;
+      saveWeeks(weeks);
+      renderWeekList();
+    }
+  }
+}
+
+// 起動時（Firebaseが使えない場合のフォールバック）
+function initApp() {
+  const existingWeeks = getWeeks();
+  if (existingWeeks.length) {
+    loadWeek(existingWeeks[0].id);
+  } else {
+    newWeek();
+  }
+}
+
+// Firebase module が initApp() を呼ぶ。タイムアウト保険
+setTimeout(() => {
+  if (!currentWeekId) initApp();
+}, 3000);
+
+// 旧起動コード（Firebase なしのとき用）
+const existingWeeks = getWeeks();
+if (existingWeeks.length) {
+  // Firebase が initApp を呼ぶので何もしない
+} else {
+  newWeek();
+}
+</script>
+</body>
+</html>
